@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Wallet-to-Wallet Transaction</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .log-area {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        /* Custom scrollbar for log area */
+        .log-area::-webkit-scrollbar {
+            width: 8px;
+        }
+        .log-area::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .log-area::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .log-area::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        .loader {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: none; /* Hidden by default */
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4 selection:bg-sky-500 selection:text-white">
+
+    <div class="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg">
+        <h1 class="text-2xl sm:text-3xl font-bold mb-6 text-center text-sky-400">Solana Basic Transaction</h1>
+
+        <div class="mb-4 p-3 bg-red-700 text-white rounded-lg text-sm">
+            <p><strong>⚠️ Security Warning:</strong> This is for educational purposes on Devnet ONLY. <strong>NEVER</strong> use real private keys or mainnet with this example. Handling raw private keys in client-side code is extremely risky.</p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label for="network" class="block text-sm font-medium text-gray-300 mb-1">Network</label>
+                <select id="network" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors">
+                    <option value="https://api.devnet.solana.com" selected>Devnet</option>
+                    <option value="https://api.testnet.solana.com">Testnet</option>
+                    </select>
+            </div>
+
+            <div>
+                <label for="senderPrivateKey" class="block text-sm font-medium text-gray-300 mb-1">Sender's Private Key (Uint8Array as comma-separated numbers)</label>
+                <textarea id="senderPrivateKey" rows="3" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors" placeholder="e.g., 1,2,3,...,64 (64 numbers between 0-255)"></textarea>
+                <button id="generateSender" class="mt-2 px-4 py-2 text-xs bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors">Generate New Devnet Sender & Airdrop SOL</button>
+                <p id="senderPubKeyDisplay" class="text-xs text-gray-400 mt-1 break-all"></p>
+            </div>
+
+            <div>
+                <label for="receiverPublicKey" class="block text-sm font-medium text-gray-300 mb-1">Receiver's Public Key (Base58)</label>
+                <input type="text" id="receiverPublicKey" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors" placeholder="Enter receiver's Base58 public key">
+                <button id="generateReceiver" class="mt-2 px-4 py-2 text-xs bg-teal-600 hover:bg-teal-700 rounded-lg transition-colors">Generate New Devnet Receiver</button>
+                <p id="receiverPubKeyDisplay" class="text-xs text-gray-400 mt-1 break-all"></p>
+            </div>
+
+            <div>
+                <label for="amount" class="block text-sm font-medium text-gray-300 mb-1">Amount (SOL)</label>
+                <input type="number" id="amount" step="0.000000001" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors" placeholder="e.g., 0.01">
+            </div>
+
+            <button id="sendTransaction" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold p-3 rounded-lg transition-colors flex items-center justify-center">
+                Send Transaction
+                <div id="loader" class="loader"></div>
+            </button>
+        </div>
+
+        <div class="mt-6">
+            <h2 class="text-lg font-semibold mb-2 text-sky-400">Transaction Log</h2>
+            <div id="logOutput" class="p-3 bg-gray-950 rounded-lg log-area text-sm text-gray-300 border border-gray-700">
+                Welcome! Fill in the details and click "Send Transaction".<br>
+                You can generate new Devnet keypairs and airdrop SOL to the sender.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Ensure solanaWeb3 is loaded
+        if (typeof solanaWeb3 === 'undefined') {
+            document.getElementById('logOutput').textContent = 'Error: Solana Web3.js library not loaded. Please check your internet connection or the script URL.';
+            throw new Error("Solana Web3.js library not loaded.");
+        }
+
+        const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = solanaWeb3;
+
+        const networkSelect = document.getElementById('network');
+        const senderPrivateKeyInput = document.getElementById('senderPrivateKey');
+        const receiverPublicKeyInput = document.getElementById('receiverPublicKey');
+        const amountInput = document.getElementById('amount');
+        const sendTransactionButton = document.getElementById('sendTransaction');
+        const logOutput = document.getElementById('logOutput');
+        const generateSenderButton = document.getElementById('generateSender');
+        const generateReceiverButton = document.getElementById('generateReceiver');
+        const senderPubKeyDisplay = document.getElementById('senderPubKeyDisplay');
+        const receiverPubKeyDisplay = document.getElementById('receiverPubKeyDisplay');
+        const loader = document.getElementById('loader');
+
+        let connection;
+
+        function updateConnection() {
+            connection = new Connection(networkSelect.value, 'confirmed');
+            log(`Connection updated to: ${networkSelect.value}`);
+        }
+        networkSelect.addEventListener('change', updateConnection);
+        updateConnection(); // Initial connection setup
+
+        function log(message) {
+            console.log(message); // Also log to browser console for more detailed debugging if needed
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.innerHTML += `[${timestamp}] ${message}\n`;
+            logOutput.scrollTop = logOutput.scrollHeight; // Auto-scroll
+        }
+
+        function generateKeypairAndDisplay(isSender) {
+            try {
+                const newKeypair = Keypair.generate();
+                const secretKeyArray = Array.from(newKeypair.secretKey); // Convert Uint8Array to regular array for display
+                const publicKeyBase58 = newKeypair.publicKey.toBase58();
+
+                if (isSender) {
+                    senderPrivateKeyInput.value = secretKeyArray.join(',');
+                    // Manually trigger input event to update display and validate the new key
+                    senderPrivateKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    log(`Generated new Sender Keypair. Public Key: ${publicKeyBase58}`);
+                    log(`Sender Private Key (Uint8Array): [${secretKeyArray.join(',')}] - KEEP THIS SAFE IF USING FOR ANYTHING REAL (NEVER FOR MAINNET FROM BROWSER).`);
+                    
+                    if (networkSelect.value.includes('devnet')) {
+                        log(`Attempting to airdrop 1 SOL to ${publicKeyBase58} on Devnet. This may take a moment...`);
+                        loader.style.display = 'inline-block';
+                        generateSenderButton.disabled = true; 
+                        sendTransactionButton.disabled = true; 
+
+                        connection.getLatestBlockhash('confirmed')
+                            .then(latestBlockhash => {
+                                log(`Latest blockhash for airdrop: ${latestBlockhash.blockhash}`);
+                                return connection.requestAirdrop(newKeypair.publicKey, LAMPORTS_PER_SOL)
+                                    .then(signature => ({ signature, ...latestBlockhash })); 
+                            })
+                            .then(({ signature, blockhash, lastValidBlockHeight }) => {
+                                log(`Airdrop requested. Signature: ${signature}`);
+                                log(`Confirming airdrop transaction (this can take up to a minute)...`);
+                                return connection.confirmTransaction({
+                                    signature,
+                                    blockhash,
+                                    lastValidBlockHeight
+                                }, 'confirmed');
+                            })
+                            .then((confirmationResult) => {
+                                if (confirmationResult.value.err) {
+                                    throw new Error(`Airdrop transaction confirmation failed: ${JSON.stringify(confirmationResult.value.err)}`);
+                                }
+                                log(`1 SOL airdropped successfully to ${publicKeyBase58}.`);
+                                checkBalance(newKeypair.publicKey, 'Sender');
+                            })
+                            .catch(err => {
+                                log(`Airdrop failed: ${err.message}`);
+                                console.error("Airdrop error:", err);
+                                if (err.message && (err.message.includes("429") || (err.error && err.error.message && err.error.message.includes("airdrop limit")) || (err.toString && err.toString().includes("429")) )) {
+                                    log("TIP: Devnet airdrops are heavily rate-limited or the faucet may be dry. Please wait (e.g., 1-5 minutes or more) before trying again, or visit https://faucet.solana.com for alternatives.");
+                                }
+                            })
+                            .finally(() => {
+                                loader.style.display = 'none';
+                                generateSenderButton.disabled = false; 
+                                sendTransactionButton.disabled = false; 
+                            });
+                    } else {
+                        log("Airdrop only available on Devnet. Please switch network or fund manually.");
+                    }
+                } else {
+                    receiverPublicKeyInput.value = publicKeyBase58;
+                    receiverPubKeyDisplay.textContent = `Receiver Public Key: ${publicKeyBase58}`;
+                    log(`Generated new Receiver Keypair. Public Key: ${publicKeyBase58}`);
+                }
+            } catch (error) {
+                log(`Error generating keypair: ${error.message}`);
+                console.error("Keypair generation error:", error);
+            }
+        }
+
+        generateSenderButton.addEventListener('click', () => generateKeypairAndDisplay(true));
+        generateReceiverButton.addEventListener('click', () => generateKeypairAndDisplay(false));
+        
+        senderPrivateKeyInput.addEventListener('input', () => {
+            senderPubKeyDisplay.textContent = ''; // Clear previous message
+            let parsedSecretKeyArray; // To store the successfully parsed array for logging in catch
+
+            try {
+                const privateKeyString = senderPrivateKeyInput.value;
+                if (!privateKeyString.trim()) {
+                    senderPubKeyDisplay.textContent = 'Enter a private key.';
+                    return;
+                }
+                const secretKeyArrayStrings = privateKeyString.split(',');
+
+                if (secretKeyArrayStrings.length !== 64) {
+                    // More specific error for the display
+                    senderPubKeyDisplay.textContent = `Invalid format: Expected 64 numbers, found ${secretKeyArrayStrings.length}.`;
+                    // Throw error for console logging and to stop execution
+                    throw new Error(`Invalid format: Expected 64 numbers, found ${secretKeyArrayStrings.length}.`);
+                }
+
+                parsedSecretKeyArray = secretKeyArrayStrings.map((s, index) => {
+                    const numStr = s.trim();
+                    const num = parseInt(numStr, 10);
+                    if (isNaN(num) || num < 0 || num > 255) {
+                        // More specific error for the display
+                        senderPubKeyDisplay.textContent = `Invalid number at index ${index} ('${numStr}'). Must be 0-255.`;
+                        // Throw error for console logging
+                        throw new Error(`Invalid number at index ${index} ('${numStr}'). Must be a whole number between 0-255.`);
+                    }
+                    return num;
+                });
+                
+                // If we reach here, parsedSecretKeyArray is an array of 64 valid numbers.
+                const uint8ArrayToUse = Uint8Array.from(parsedSecretKeyArray);
+                
+                const keypair = Keypair.fromSecretKey(uint8ArrayToUse); 
+                senderPubKeyDisplay.textContent = `Sender Public Key: ${keypair.publicKey.toBase58()}`;
+
+            } catch (e) { 
+                // If senderPubKeyDisplay hasn't been set by a specific parsing error message, set it now.
+                if (!senderPubKeyDisplay.textContent) {
+                    senderPubKeyDisplay.textContent = `Error: ${e.message}`;
+                }
+                console.error("Error in senderPrivateKeyInput listener:", e, "Input value:", senderPrivateKeyInput.value);
+                // If the error is "provided secretKey is invalid", log the array that was attempted
+                if (e.message && e.message.toLowerCase().includes("secretkey is invalid") && parsedSecretKeyArray) {
+                    console.error("Parsed secretKeyArray that might have caused 'secretKey is invalid' error:", parsedSecretKeyArray);
+                    try {
+                        const uint8Version = Uint8Array.from(parsedSecretKeyArray);
+                        console.error("Uint8Array version that was attempted:", uint8Version);
+                    } catch (conversionError) {
+                        console.error("Error converting parsedSecretKeyArray to Uint8Array for logging:", conversionError);
+                    }
+                } else if (e.message && e.message.toLowerCase().includes("secretkey is invalid") && !parsedSecretKeyArray) {
+                    // This case might happen if the error in map was not string parsing, but something else before parsedSecretKeyArray was fully formed.
+                     console.error("parsedSecretKeyArray was not available for logging when 'secretKey is invalid' error occurred.");
+                }
+            }
+        });
+
+        receiverPublicKeyInput.addEventListener('input', () => {
+            try {
+                if (receiverPublicKeyInput.value.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
+                     const pubKey = new PublicKey(receiverPublicKeyInput.value); 
+                     receiverPubKeyDisplay.textContent = `Receiver Public Key: ${pubKey.toBase58()}`;
+                } else {
+                    receiverPubKeyDisplay.textContent = 'Invalid public key format (should be Base58 string).';
+                }
+            } catch (e) {
+                receiverPubKeyDisplay.textContent = 'Invalid public key format.';
+            }
+        });
+
+
+        async function checkBalance(publicKey, label) {
+            try {
+                const balance = await connection.getBalance(publicKey, 'confirmed'); 
+                log(`${label} Balance (${publicKey.toBase58()}): ${balance / LAMPORTS_PER_SOL} SOL`);
+                return balance;
+            } catch (error) {
+                log(`Error fetching ${label} balance: ${error.message}`);
+                console.error(`Balance fetch error for ${label}:`, error);
+                return null;
+            }
+        }
+
+        sendTransactionButton.addEventListener('click', async () => {
+            log("Initiating transaction...");
+            loader.style.display = 'inline-block';
+            sendTransactionButton.disabled = true;
+            generateSenderButton.disabled = true; 
+            let parsedSenderSecretKeyArray; // For logging in catch block
+
+            try {
+                // 1. Get and Validate Sender's Private Key
+                const privateKeyString = senderPrivateKeyInput.value;
+                if (!privateKeyString) {
+                    throw new Error("Sender's private key is required.");
+                }
+
+                const secretKeyArrayStrings = privateKeyString.split(',');
+                if (secretKeyArrayStrings.length !== 64) {
+                    throw new Error(`Invalid private key format: Expected 64 comma-separated numbers, but found ${secretKeyArrayStrings.length}.`);
+                }
+
+                parsedSenderSecretKeyArray = secretKeyArrayStrings.map((s, index) => {
+                    const numStr = s.trim();
+                    const num = parseInt(numStr, 10);
+                    if (isNaN(num) || num < 0 || num > 255) {
+                        throw new Error(`Invalid private key format: Number at index ${index} ('${numStr}') is not a valid byte (0-255).`);
+                    }
+                    return num;
+                });
+                
+                const senderKeypair = Keypair.fromSecretKey(Uint8Array.from(parsedSenderSecretKeyArray));
+                log(`Sender Public Key: ${senderKeypair.publicKey.toBase58()}`);
+
+                // 2. Get Receiver's Public Key
+                const receiverPublicKeyString = receiverPublicKeyInput.value;
+                if (!receiverPublicKeyString) {
+                    throw new Error("Receiver's public key is required.");
+                }
+                let receiverPublicKey;
+                try {
+                    receiverPublicKey = new PublicKey(receiverPublicKeyString);
+                } catch (e) {
+                    throw new Error("Invalid Receiver Public Key format. Please ensure it's a valid Base58 string.");
+                }
+                log(`Receiver Public Key: ${receiverPublicKey.toBase58()}`);
+
+                // 3. Get Amount
+                const amountSOL = parseFloat(amountInput.value);
+                if (isNaN(amountSOL) || amountSOL <= 0) {
+                    throw new Error("Invalid amount. Must be a positive number.");
+                }
+                const amountLamports = Math.round(amountSOL * LAMPORTS_PER_SOL); 
+                log(`Amount to send: ${amountSOL} SOL (${amountLamports} Lamports)`);
+
+                // 4. Check sender's balance
+                log("Checking sender's balance...");
+                const senderBalance = await checkBalance(senderKeypair.publicKey, 'Sender');
+                
+                const estimatedFee = 5000; 
+                
+                if (senderBalance === null || senderBalance < (amountLamports + estimatedFee) ) {
+                     throw new Error(`Insufficient balance. Sender has approx ${senderBalance !== null ? (senderBalance / LAMPORTS_PER_SOL) : 'Unknown'} SOL. Needs ${amountSOL} SOL + approx ${estimatedFee / LAMPORTS_PER_SOL} SOL for fee.`);
+                }
+
+                // 5. Create Transaction
+                log("Creating transaction...");
+                const transaction = new Transaction().add(
+                    SystemProgram.transfer({
+                        fromPubkey: senderKeypair.publicKey,
+                        toPubkey: receiverPublicKey,
+                        lamports: amountLamports,
+                    })
+                );
+
+                // 6. Sign and Send Transaction
+                log("Signing and sending transaction (using 'confirmed' commitment)...");
+                const signature = await sendAndConfirmTransaction(
+                    connection,
+                    transaction,
+                    [senderKeypair], 
+                    { commitment: 'confirmed', preflightCommitment: 'confirmed' } 
+                );
+                
+                log(`✅ Transaction successful!`);
+                const clusterParam = networkSelect.value.includes('devnet') ? 'devnet' : 
+                                   networkSelect.value.includes('testnet') ? 'testnet' : 
+                                   'mainnet-beta'; 
+                const explorerUrl = `https://explorer.solana.com/tx/${signature}?cluster=${clusterParam}`;
+                log(`   Signature: ${signature}`);
+                log(`   View on Explorer: <a href="${explorerUrl}" target="_blank" class="text-sky-400 hover:underline">${explorerUrl}</a>`);
+
+                // 7. Check balances after transaction
+                await checkBalance(senderKeypair.publicKey, 'Sender (after tx)');
+                await checkBalance(receiverPublicKey, 'Receiver (after tx)');
+
+            } catch (error) {
+                log(`❌ Transaction failed: ${error.message}`);
+                console.error("Transaction error details:", error); 
+                if (error.logs) { 
+                    log("Error logs from chain:");
+                    error.logs.forEach(l => log(`   ${l}`));
+                }
+                 if (error.message && (error.message.includes("429") || (error.toString && error.toString().includes("429")))) {
+                    log("TIP: The Solana RPC node is busy (Too Many Requests). Please wait a moment and try again, or consider using a different RPC endpoint if available.");
+                }
+                if (error.message && error.message.toLowerCase().includes("secretkey is invalid") && parsedSenderSecretKeyArray) {
+                    console.error("Parsed senderSecretKeyArray that might have caused 'secretKey is invalid' error during transaction:", parsedSenderSecretKeyArray);
+                     try {
+                        const uint8Version = Uint8Array.from(parsedSenderSecretKeyArray);
+                        console.error("Uint8Array version that was attempted for transaction:", uint8Version);
+                    } catch (conversionError) {
+                        console.error("Error converting parsedSenderSecretKeyArray to Uint8Array for logging (transaction):", conversionError);
+                    }
+                }
+            } finally {
+                loader.style.display = 'none';
+                sendTransactionButton.disabled = false;
+                generateSenderButton.disabled = false; 
+            }
+        });
+
+        // Populate with example devnet keys if fields are empty for quick testing
+        if (!senderPrivateKeyInput.value) {
+            senderPrivateKeyInput.value = "175,220,168,6,242,16,110,131,22,104,124,248,179,120,142,139,195,108,118,140,171,162,156,103,226,178,58,116,114,179,213,123,17,124,240,10,19,173,203,10,163,129,225,18,208,168,241,22,249,107,170,154,139,123,144,135,10,161,11,153,11,230,100,100";
+            senderPrivateKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (!receiverPublicKeyInput.value) {
+            receiverPublicKeyInput.value = "G2FAbFQc3J9jBSx3T7gJzB4dD9Z5qY7fH8rW1cK3xLpA";
+             receiverPublicKeyInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if(!amountInput.value) {
+            amountInput.value = "0.001";
+        }
+
+        log("Solana Basic Transaction UI Loaded. Use Devnet for testing.");
+        log("You might need to airdrop SOL to the sender if it's a new keypair or has insufficient funds.");
+        log("If you encounter '429 Too Many Requests' errors, the Devnet RPC is likely busy. Please wait and try again.");
+
+    </script>
+
+</body>
+</html>
